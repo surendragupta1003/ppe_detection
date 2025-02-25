@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>YOLO Detection</title>
+</head>
+<body class="bg-gray-900 text-white flex h-screen">
+    
+    <!-- Sidebar Navigation -->
+    <div class="w-1/5 bg-gray-800 p-4 flex flex-col space-y-4">
+        <h1 class="text-2xl font-bold">YOLO Detection</h1>
+        <button id="liveTab" class="p-2 bg-blue-600 rounded">Live Stream</button>
+        <button id="uploadTab" class="p-2 bg-gray-700 rounded">Upload File</button>
+    </div>
+    
+    <!-- Main Content -->
+    <div class="w-4/5 p-4">
+        <div id="liveStreamSection" class="flex flex-col items-center">
+            <label class="text-lg">Select Camera:</label>
+            <select id="cameraSelect" class="p-2 bg-gray-700 rounded text-white mb-4">
+                {% for name in cameras.keys() %}
+                <option value="{{ name }}">{{ name }}</option>
+                {% endfor %}
+            </select>
+            <div class="flex justify-center">
+                <img id="videoFeed" class="border-4 border-green-500 rounded-lg w-full max-w-3xl">
+            </div>
+        </div>
+        
+        <div id="uploadSection" class="hidden flex flex-col items-center">
+            <input type="file" id="fileInput" class="mb-4 p-2 bg-gray-700 rounded text-white">
+            <button id="uploadButton" class="p-2 bg-green-600 rounded">Upload and Predict</button>
+            
+            <div class="flex mt-4 space-x-4">
+                <div>
+                    <h2 class="text-2xl">Uploaded Image</h2>
+                    <img id="inputImage" class="border-4 border-yellow-500 rounded-lg mt-2 w-full max-w-3xl" hidden>
+                </div>
+                <div>
+                    <h2 class="text-2xl">Predicted Output</h2>
+                    <img id="outputImage" class="border-4 border-blue-500 rounded-lg mt-2 w-full max-w-3xl" hidden>
+                </div>
+            </div>
+        </div>
+        
+        <h2 class="text-2xl mt-6">Motion Log</h2>
+        <ul id="motionLog" class="bg-gray-800 p-4 rounded-lg mt-2 w-full"></ul>
+    </div>
+    
+    <script>
+        document.getElementById("liveTab").addEventListener("click", function() {
+            document.getElementById("liveStreamSection").classList.remove("hidden");
+            document.getElementById("uploadSection").classList.add("hidden");
+        });
+
+        document.getElementById("uploadTab").addEventListener("click", function() {
+            document.getElementById("liveStreamSection").classList.add("hidden");
+            document.getElementById("uploadSection").classList.remove("hidden");
+        });
+
+        document.getElementById("uploadButton").addEventListener("click", function() {
+            let fileInput = document.getElementById("fileInput");
+            if (fileInput.files.length === 0) {
+                alert("Please select a file.");
+                return;
+            }
+            
+            let formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+            
+            fetch("/predict", {
+                method: "POST",
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById("inputImage").src = "/uploads/" + fileInput.files[0].name;
+                document.getElementById("inputImage").hidden = false;
+                document.getElementById("outputImage").src = "/outputs/" + fileInput.files[0].name;
+                document.getElementById("outputImage").hidden = false;
+            })
+            .catch(error => console.error("Error:", error));
+        });
+    </script>
+</body>
+</html>
