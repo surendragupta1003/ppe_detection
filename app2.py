@@ -9,9 +9,6 @@ import logging
 import threading
 import time
 import queue  # Import the queue module
-import base64
-import requests
-from PIL import Image
 
 # Load environment variables
 load_dotenv()
@@ -32,11 +29,6 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
 
 db_path = "detections.db"
-
-#API Details
-WHATSAPP_API_URL = os.getenv("WHATSAPP_API_URL", "https://suom.in/client/sendMessage/Suren")  # Get from .env or default
-WHATSAPP_CHAT_ID = os.getenv("WHATSAPP_CHAT_ID", "120363413490780669@g.us")  # Get from .env or default
-
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -122,90 +114,12 @@ except Exception as e:
 
 SEGMENTATION_CLASSES = {
     0: "Panel",
+    1: "Restricted Passage",
+    2: "Safe Passage"
 }
-
-DETECTION_CLASSES = {
-    0: "Arc Suit 12 Kcal/m2",
-    1: "Arc Suit 45 Kcal/m2",
-    2: "Arc Suit 8.8 Kcal/m2",
-    3: "Face Shield",
-    4: "Hand Gloves",
-    5: "No Arc Suit",
-    6: "No Face Shield",
-    7: "No Hand Gloves",
-    8: "No Safety Helmet",
-    9: "No Safety Shoes",
-    10: "Safety Helmet",
-    11: "Safety Shoes"
-}
-
 
 # Global Queue to pass detection to main Thread.
 detection_queue = queue.Queue()
-
-def resize_image(image_path, max_size=(800, 800)):
-    """Resizes the image to reduce file size while maintaining aspect ratio."""
-    try:
-        img = Image.open(image_path)
-        img.thumbnail(max_size)  # Resize while keeping aspect ratio
-        resized_path = os.path.splitext(image_path)[0] + "_resized.jpg"
-        img.save(resized_path, "JPEG", quality=85)  # Save with optimized quality
-        return resized_path
-    except Exception as e:
-        logging.error(f"Error resizing image: {e}")
-        return None
-
-def convert_image_to_base64(image_path):
-    """Converts an image file to a base64-encoded string."""
-    try:
-        with open(image_path, "rb") as image_file:
-            base64_encoded = base64.b64encode(image_file.read()).decode('utf-8')
-            return base64_encoded
-    except Exception as e:
-        logging.error(f"Error converting image to base64: {e}")
-        return None
-
-def send_media(image_path, chat_id, api_url):
-    """Sends a base64-encoded image via an API."""
-    try:
-        # Resize image first
-        resized_path = resize_image(image_path)
-        if not resized_path:
-            logging.error("Failed to resize image, cannot send media.")
-            return
-
-        base64_data = convert_image_to_base64(resized_path)
-        if not base64_data:
-            logging.error("Failed to convert image to base64, cannot send media.")
-            return
-
-        filename = os.path.basename(resized_path)
-        mimetype = "image/jpeg"  # Adjust this based on your image type
-
-        payload = {
-            "chatId": chat_id,
-            "contentType": "MessageMedia",
-            "content": {
-                "mimetype": mimetype,
-                "data": base64_data,
-                "filename": filename
-            }
-        }
-
-        headers = {
-            "Content-Type": "application/json"
-        }
-
-        response = requests.post(api_url, headers=headers, data=json.dumps(payload))
-
-        # Print the response from the API
-        logging.info(f"Whatsapp API Status Code: {response.status_code}")
-        if response.status_code == 200:
-            logging.info("Message sent successfully!")
-        else:
-            logging.error(f"Error sending Whatsapp message: {response.text}")
-    except Exception as e:
-        logging.error(f"Error sending media: {e}")
 
 def monitor_camera(camera_ip, camera_name):
     """Monitors a single camera for detections in a background thread."""
@@ -230,16 +144,8 @@ def monitor_camera(camera_ip, camera_name):
 
             for result in results:
                 for box in result.boxes:
-                    class_id = int(box.cls[0])
-                    label = DETECTION_CLASSES.get(class_id, "Unknown")
-                    confidence = float(box.conf[0])
-                    if confidence > 0.75:
-                        # Save the detected image
-                        image_path = os.path.join(OUTPUT_FOLDER, f"{camera_name}_{int(time.time())}.jpg")
-                        cv2.imwrite(image_path, frame)
-
-                        # Pass detection to main thread.
-                        detection_queue.put((camera_name, label, image_path))
+                    label = model_det.names[int(box.cls[0])]
+                    detection_queue.put((camera_name, label)) #Pass detection to main thread.
 
         except Exception as e:
             logging.error(f"Error processing frame from {camera_name}: {e}")
@@ -264,10 +170,8 @@ def initialize(): #Remove Decorator
     def process_detections():
          while True:
             try:
-                camera_name, label, image_path = detection_queue.get(timeout = 5) #Timeout incase Queue never recieves data.
+                camera_name, label = detection_queue.get(timeout = 5) #Timeout incase Queue never recieves data.
                 record_movement(camera_name, f"{label} detected")
-                # Send the detected image via WhatsApp
-                send_media(image_path, WHATSAPP_CHAT_ID, WHATSAPP_API_URL)
             except queue.Empty:
                 pass #Queue is empty.
     thread = threading.Thread(target = process_detections)
@@ -314,8 +218,7 @@ def generate_frames(camera_ip, camera_name, model_type="detection"):
                 else:
                     for box in result.boxes:
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
-                        class_id = int(box.cls[0])
-                        label = DETECTION_CLASSES.get(class_id, "Unknown")
+                        label = result.names[int(box.cls[0])]
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
@@ -393,8 +296,7 @@ def predict():
         for result in results_det:
             for box in result.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                class_id = int(box.cls[0])
-                label = DETECTION_CLASSES.get(class_id, "Unknown")
+                label = result.names[int(box.cls[0])]
                 cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(img, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
@@ -410,9 +312,6 @@ def predict():
                         cv2.putText(img, label, (pts[0][0][0], pts[0][0][1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
         cv2.imwrite(output_path, img)
-
-        # Trigger WhatsApp message with the output image
-        send_media(output_path, WHATSAPP_CHAT_ID, WHATSAPP_API_URL)
 
         return jsonify({
             "input": f"/uploads/{filename}",
